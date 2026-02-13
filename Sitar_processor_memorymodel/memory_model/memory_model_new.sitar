@@ -1,0 +1,279 @@
+module Top
+
+	submodule P : Processor<2,50,40>
+	submodule M : Memory<512>
+
+	net n1 : capacity 1 width 6	
+	net n2 : capacity 1 width 5
+	M.n_request <= n1
+	M.n_response => n2
+	P.n_response <= n2
+	P.n_request => n1
+behavior
+	$ log<<endl<<"Processor-Memory Subsystem"<<endl; $;
+end behavior 
+	
+end module	
+
+module Processor
+
+parameter int EXECUTION_DELAY = 2
+parameter int P_LOAD = 50
+parameter int P_STORE = 40
+
+	inport n_response : width 5
+	outport n_request : width 6
+
+decl
+$
+	token<6> req_t;
+	token<5> resp_t;
+	uint32_t addr;
+	uint8_t type;
+	uint8_t specifier;
+	bool load_inst;
+	bool store_inst;
+	bool execution_complete=1;
+$
+
+
+include 
+$
+#include<cstring>
+#include<cstdlib>
+#include<iostream>
+#include<mem_def.h>
+$
+
+
+//#define IFETCH 0
+//#define LOAD 1
+//#define STORE 2
+//#define WORD        4
+//#define DOUBLEWORD  8
+//#define QUADWORD    16
+
+//IFETCH is word aligned
+
+behavior 
+	do 
+		wait until((this_phase == 1));			//Writing to the net (IFETCH)
+			wait until((execution_complete==1));
+		$	
+			log<<endl<<"----------Processor IFETCH Request--------- ";
+			addr = rand() & 0xFFFFFFFF;		//Random 32 bit address
+			log<<endl<<"IFETCH addr= "<<addr;
+			type = IFETCH;
+			int rand_specifier = rand() % 3;	//Randomizing specifier also
+			if(rand_specifier == 0) {
+				specifier = WORD;
+				addr = (addr >> 2) * 4; 	//Address word aligned
+			}
+			else if(rand_specifier == 1) {
+				specifier = DOUBLEWORD;
+				addr = (addr >> 3) * 8;		//Address doubleword aligned
+			}
+			else if(rand_specifier == 2) {
+				specifier = QUADWORD;
+				addr = (addr >> 4) * 16;	//Address quadword aligned
+			}	
+			log<<endl<<"IFETCH specifier= "<<(int)specifier;		
+			log<<endl<<"IFETCH aligned addr= "<<addr;	
+			memcpy(req_t.data(), &addr, 4);
+			req_t.data()[4] = type;
+			req_t.data()[5] = specifier;
+			while(n_request.push(req_t));		// 6 byte wide Request Token 
+			log<<endl<<"IFETCH REQUEST (Processor Side)= "<<req_t.info()<<endl;
+		$;
+
+            
+		wait until(this_phase == 0);
+		$
+			log<<endl<<"----------Processor Recieving Response--------- ";
+			while(n_response.pull(resp_t));
+			log<<endl<<"Response Recieved= "<<resp_t.info()<<endl;
+			
+		$;
+		
+
+		$
+			execution_complete=0;
+			log<<endl<<"----------Processor Executing----------"<<endl;
+		$;
+
+		wait until(this_phase == 0);
+			wait(EXECUTION_DELAY,0);
+
+
+
+
+		$
+			load_inst = (rand() % 100 < P_LOAD);
+			if(load_inst){							
+			        type = LOAD;
+			        memcpy(req_t.data(), &addr, 4);
+		      	 	req_t.data()[4] = type;
+		      		req_t.data()[5] = specifier;
+			}
+		$;
+	       
+                $                                                                                                                                                                                   log<<endl<<"----------Execution Completed-----------"<<endl;
+			execution_complete=1;
+		$;
+
+
+		if(load_inst) then
+			wait until(this_phase == 1);
+		        $
+				while(n_request.push(req_t));
+				log<<endl<<"LOAD REQUEST SENT (by Processor)= "<<req_t.info()<<endl;
+			$;
+			end if;
+
+
+
+			wait until(this_phase == 0);
+			$
+			        while(n_response.pull(resp_t));
+		       		log<<endl<<"LOAD RESPONSE RECIEVED (by Processor)= "<<resp_t.info();
+                	$;
+		
+
+
+		$
+			store_inst = (rand() % 100 < P_STORE);
+			if(store_inst)
+			{
+		        	type = STORE;
+		        	memcpy(req_t.data(), &addr, 4);
+		        	req_t.data()[4] = type;
+		        	req_t.data()[5] = specifier;
+			}
+		$;	
+
+
+
+		if(store_inst) then
+			wait until(this_phase == 1);
+		        $
+				while(n_request.push(req_t));
+				log<<endl<<"STORE REQUEST SENT (by Processor= )"<<req_t.info();
+			$;
+			end if;
+
+		wait until(this_phase == 0);
+		$
+		        while(n_response.pull(resp_t));
+		        log<<endl<<"STORE RESPONSE RECIEVED (by Processor)= "<<resp_t.info()<<endl;
+                $;
+		
+
+	while(this_cycle<25)	
+	end do;
+end behavior
+end module
+
+
+
+
+
+
+
+module Memory
+parameter int SIZE = 512
+parameter int MEMORY_DELAY = 1
+        inport n_request : width 6
+	outport n_response : width 5
+
+decl
+$
+        token<6> req_t;
+        token<5> resp_t;
+        uint32_t addr;
+        uint8_t type;
+        uint8_t specifier;
+	uint8_t status;
+	uint8_t mem[SIZE];
+$
+
+include
+$
+#include<cstring>
+#include<cstdlib>
+#include<iostream>
+#include<mem_def.h>
+$
+
+init
+$
+	for (uint16_t i=0; i < SIZE; i++)
+		{
+			mem[i] = rand() & 0xFF;		//Random initialization of Memory
+		}
+$
+
+behavior
+	do
+		wait until(this_phase == 0);
+			wait(MEMORY_DELAY,0);
+		$
+			log<<endl<<"----------Memory Recieving Request--------- ";
+                       // log << endl<<"Request Recieved (by Memory) "<<req_t.info();
+			while(n_request.pull(req_t)){
+				memcpy(&addr, req_t.data(), 1);
+				log << endl<<"Request Recieved (by Memory) "<<req_t.info();
+				addr = addr & 0x000000FF;				//256B memory
+	       		        //log << endl<< "addr=0x"<< std::hex << addr<< std::dec;	
+	       		        type =req_t.data()[4];
+				specifier = req_t.data()[5];
+					status = 0;								//No error	
+				if(specifier != WORD && specifier != DOUBLEWORD && specifier != QUADWORD)	//illegal specifiar
+					status = 1;
+				if ( (addr + specifier) > SIZE)		//larger than the cache size	
+					status = 2;
+				if (addr % specifier != 0) 		//Unaligned address
+        				status = 3;
+		
+		}
+		log<<endl;
+		$;
+		wait until(this_phase == 0);
+			wait(MEMORY_DELAY,0);
+		$
+    		resp_t.data()[0] = status;
+		log << endl<<"status= "<<(int)status;
+    		if (status == 0 && (type == LOAD || type == IFETCH))
+		{
+			log<<endl<<"---------LOADING FROM MEMORY---------";
+        		memcpy(resp_t.data(), &mem[addr],specifier);		//Word, Double,Quad Word Addressed
+			log<<endl<<"Loading " <<(int) specifier<<" Bytes from memory location " << addr;
+    		}
+		log << endl;
+		$;
+
+
+
+
+	
+		wait until(this_phase == 1);
+			wait(MEMORY_DELAY,0);
+		$
+               
+		if(status == 0 && (type == STORE))
+		{
+			log<<endl<<"---------STORING IN MEMORY---------";
+			mem[addr] = addr & 0xFF;
+		 	log<<endl<<"Storing " <<(int)mem[addr]<<" at memory location " << addr;
+		}
+
+		log<<endl<<"---------MEMORY RESPONDING---------";
+    		while(n_response.push(resp_t));	
+		log<<endl<<"MEMORY RESPONSE= "<<resp_t.info();
+		log<<endl;
+    		$;
+	while(this_cycle<25)
+	end do;
+end behavior
+end module
+
+

@@ -1,0 +1,231 @@
+module Top
+
+	submodule b : processor<2,50,40>
+	submodule a : L1_cache<512>
+
+	net n1 : capacity 6 width 6	
+	net n2 : capacity 6 width 5
+	a.n_request <= n1
+	a.n_response => n2
+	b.n_response <= n2
+	b.n_request => n1
+behavior
+	$ log<<endl<<"Hello world "; $;
+end behavior 
+	
+end module	
+
+module processor
+
+parameter int EXECUTION_DELAY = 2
+parameter int P_LOAD = 50
+parameter int P_STORE = 40
+
+	inport n_response : width 5
+	outport n_request : width 6
+
+decl
+$
+	token<6> req_t;
+	token<5> resp_t;
+	uint32_t addr;
+	uint8_t type;
+	uint8_t specifier;
+	bool load_inst;
+	bool store_inst;
+$
+
+
+include 
+$
+#include<cstring>
+#include<cstdlib>
+#include<iostream>
+#include<mem_def.h>
+$
+
+
+//#define IFETCH 0
+//#define LOAD 1
+//#define STORE 2
+//#define WORD        4
+//#define DOUBLEWORD  8
+//#define QUADWORD    16
+
+//IFETCH is word aligned
+
+behavior 
+	do 
+		wait until(this_phase == 1);
+		$
+			addr = rand() & 0xFFFFFFFC;
+		        //addr = rand();
+			type = IFETCH;
+			specifier = WORD;
+			memcpy(req_t.data(), &addr, 4);
+			req_t.data()[4] = type;
+			req_t.data()[5] = specifier;
+			while(n_request.push(req_t));
+			log<<endl<<"req_t_fetch="<<req_t.info();
+		$;
+
+
+		wait until(this_phase == 0);
+		$
+			while(n_response.pull(resp_t));
+			log<<endl<<"resp_t_fetch="<<resp_t.info();
+		$;
+			wait(EXECUTION_DELAY,0);
+			
+		$
+			load_inst = (rand() % 100 < P_LOAD);
+			if(load_inst)
+			{
+				
+				int rand_specifier = rand() % 3;
+			
+				if(rand_specifier == 0) specifier = WORD;
+				else if(rand_specifier == 1) specifier = DOUBLEWORD;
+				else if(rand_specifier == 2) specifier = QUADWORD;
+			addr = rand();
+		        addr = addr & ~(specifier - 1); 
+		        type = LOAD;
+		        memcpy(req_t.data(), &addr, 4);
+		        req_t.data()[4] = type;
+		        req_t.data()[5] = specifier;
+			}
+		$;	
+			if(load_inst) then
+			wait until(this_phase == 1);
+		        $
+				while(n_request.push(req_t));
+				log<<endl<<"req_t_load="<<req_t.info();
+			$;
+			end if;
+
+		wait until(this_phase == 0);
+		$
+		        while(n_response.pull(resp_t));
+		        log<<endl<<"resp_t_load="<<resp_t.info();
+                $;
+		
+		$
+			store_inst = (rand() % 100 < P_STORE);
+			if(store_inst)
+			{
+				
+				int rand_specifier = rand() % 3;
+			
+				if(rand_specifier == 0) specifier = WORD;
+				else if(rand_specifier == 1) specifier = DOUBLEWORD;
+				else if(rand_specifier == 2) specifier = QUADWORD;
+			addr = rand();
+		        addr = addr & ~(specifier - 1); 
+		        type = STORE;
+		        memcpy(req_t.data(), &addr, 4);
+		        req_t.data()[4] = type;
+		        req_t.data()[5] = specifier;
+			}
+		$;	
+			if(store_inst) then
+			wait until(this_phase == 1);
+		        $
+				while(n_request.push(req_t));
+				log<<endl<<"req_t_store="<<req_t.info();
+			$;
+			end if;
+
+		wait until(this_phase == 0);
+		$
+		        while(n_response.pull(resp_t));
+		        log<<endl<<"resp_t_store="<<resp_t.info();
+                $;
+		
+
+	while(this_cycle<20)	
+	end do;
+end behavior
+
+end module
+
+module L1_cache
+parameter int SIZE = 512
+parameter int MEMORY_DELAY = 1
+        inport n_request : width 6
+	outport n_response : width 5
+
+decl
+$
+        token<6> req_t;
+        token<5> resp_t;
+        uint32_t addr;
+        uint8_t type;
+        uint8_t specifier;
+	uint8_t status;
+	uint8_t mem[SIZE];
+$
+
+include
+$
+#include<cstring>
+#include<cstdlib>
+#include<iostream>
+#include<mem_def.h>
+$
+
+init
+$
+	for (uint16_t i=0; i < SIZE; i++)
+		{
+			mem[i] = (uint8_t)i;
+		}
+$
+
+behavior
+	do
+		wait until(this_phase == 0);
+		$
+		while(n_request.pull(req_t))
+		{
+		memcpy(&addr, req_t.data(), 1);
+		addr = addr & 0x000000FF;
+	        //log << endl<< "addr=0x"<< std::hex << addr<< std::dec;	
+	        type =req_t.data()[4];
+		specifier = req_t.data()[5];
+		status = 0;
+		if(specifier != WORD && specifier != DOUBLEWORD && specifier != QUADWORD)
+			status = 1;
+		if ( (addr + specifier) > SIZE)
+			status = 2;
+		if (addr % specifier != 0)
+        		status = 3;
+		
+		}
+		log<<endl<<"req_t="<<req_t.info();
+		$;
+    		
+		$
+    		resp_t.data()[0] = status;
+		log << endl<<"status="<<(int)status;
+    		if (status == 0 && (type == LOAD || type == IFETCH))
+		{
+        		memcpy(resp_t.data(), &mem[addr],specifier );
+    		}
+		else if(status == 0 && (type == STORE))
+		{
+			mem[addr] = addr & 0xFF;
+			log<<endl<<"mem[addr]"<< (int)mem[addr];
+		}
+		$;
+
+                wait(MEMORY_DELAY,0);
+		wait until(this_phase == 1);
+		$
+    		while(n_response.push(resp_t));	
+		log<<endl<<"resp_t="<<resp_t.info();
+    		$;
+	while(this_cycle<20)
+	end do;
+end behavior
+end module
+

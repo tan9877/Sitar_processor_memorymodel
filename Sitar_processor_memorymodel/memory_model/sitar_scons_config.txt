@@ -1,0 +1,7 @@
+/home/nwl_3/Sitar/sitar/scripts/../
+sitar_sim
+/home/nwl_3/Sitar/sitar/scripts/../compiler/sitar_default_main.cpp
+False
+True
+
+./Output

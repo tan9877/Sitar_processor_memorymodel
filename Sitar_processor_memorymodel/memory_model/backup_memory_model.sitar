@@ -1,0 +1,137 @@
+module Top
+	submodule a : L1_cache
+	net n1, n2 : capacity 1 width 1
+	net n3, n4,n5 : capacity 1 width 4
+	a.load_req <= n1
+	a.store_req <= n2
+	a.address <= n3
+	a.store_data <= n4
+	a.load_data => n5
+	behaviour
+	$ do 
+	$cout<<"\n In module A at time";$;
+	wait(2,0);
+	1 => n2
+	6345 => n3
+	4 * 6345 => n4
+	wait(2,0);
+	while(1)
+	end do; $
+	end behavior
+end module	
+
+module L1_cache
+		inport load_req : width 1
+		inport store_req : width 1
+		inport address : width 4
+		inport store_data : width 4
+		outport load_data : width 4
+decl
+$
+	token<1> t1,t2;token<4> t3,t4,t5; 
+	static const int cache_lines = 64;
+	static const int offset_bits  = 6;
+        static const int index_bits  = 6;
+	uint32_t data_mem[cache_lines];
+	uint32_t tagarray_mem[cache_lines];
+	bool valid[cache_lines];
+	uint32_t addr,rdata,wdata,index,tag;
+$
+include $#include<cstring>$
+init
+$
+	for (int i=0;i<cache_lines;i++)
+	{
+		data_mem[i] = 0;
+		tagarray_mem[i] = 0;
+		valid[i] = false;
+	}
+$
+
+        behavior
+	do
+		
+          	if(load_req.pull(t1)) then
+			$while(address.pull(t3))
+				memcpy(&addr, t3.data(),4);$;
+                        $index = (addr and 0x00003F00);$;
+        		$tag   = addr >> (offset_bits + index_bits);$;
+        
+
+        		if ($valid[index] and tagarray_mem[index] == tag$) then
+            			$rdata = data_mem[index];$;
+        		else
+           			$rdata = 0;$;
+        		end if;
+			$while(load_data.push(t5))
+                                memcpy(t5.data(),&rdata,4);$;
+
+		else
+			if(store_req.pull(t2)) then
+				$while(address.pull(t3))
+                                	memcpy(&addr, t3.data(),4);$;
+				$while(store_data.pull(t4))
+	                                memcpy(&wdata, t4.data(),4);$;
+
+                        	$index = (addr and 0x00003F00);$;
+                        	$tag   = addr >> (offset_bits + index_bits);$;
+                                $data_mem[index] = wdata;$;
+                        	$valid[index] = true;$;
+				$tagarray_mem[index] = tag;$;
+                        end if; 
+	
+		end if;
+
+	while(1)
+	end do;
+        $log<<endl<<"Time out";$	
+        end behavior
+
+end module
+
+module processor
+	inport n_response : width 17
+	outport n_request : width 6
+
+parameter int EXECUTION_DELAY = 2
+parameter float P_LOAD = 0.5
+parameter float P_STORE = 0.4
+decl
+$
+	token<6> req_t;
+	token<17> resp_t;
+	uint32_t addr;
+	uint8_t type;
+	uint8_t specifier;
+$
+include 
+$
+#include<cstring.h>
+#include<cstdlib.h>
+#include<iostream.h>
+$
+
+behaviour 
+	do 
+		wait until(this_phase == 1);
+		$
+		addr = rand() & 0xFFFFFFFC;
+		type = 0;
+		specifier = 4;
+		memcpy(req_t.data(), &addr, 4);
+		req_t.data()[5] = type;
+		req_t.data()[6] = specifier;
+		n_request.push(req_t);
+		$;
+
+
+		wait until(this_phase == 0);
+		$
+		response.pull(resp_t);
+		log<<endl<<"t="<<resp_t.info();	
+		$;
+	while(1)
+	end do;
+end behaviour
+
+end module
